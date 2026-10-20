@@ -1,4 +1,4 @@
-import sqlite3, bcrypt, jwt, datetime
+import os, sqlite3, bcrypt, jwt, datetime
 from functools import wraps
 from flask import Flask, request, jsonify, g
 from markupsafe import escape
@@ -28,11 +28,12 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             content TEXT NOT NULL)""")
-        # 预置测试用户 alice，密码 password123 (bcrypt加密)
-        h = bcrypt.hashpw(b"password123", bcrypt.gensalt())
-        conn.execute("INSERT OR IGNORE INTO users (username, password_hash) VALUES (?,?)", ("alice", h))
-        # 预置一条测试数据（包含测试 XSS 的 payload）
-        conn.execute("INSERT OR IGNORE INTO posts (title, content) VALUES (?,?)", ("First post", "Hello <script>alert(1)</script>"))
+        # 只在空库时预置种子数据，避免每次启动重复插入
+        if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] == 0:
+            h = bcrypt.hashpw(b"password123", bcrypt.gensalt())
+            conn.execute("INSERT INTO users (username, password_hash) VALUES (?,?)", ("alice", h))
+        if conn.execute("SELECT COUNT(*) FROM posts").fetchone()[0] == 0:
+            conn.execute("INSERT INTO posts (title, content) VALUES (?,?)", ("First post", "Hello <script>alert(1)</script>"))
         conn.commit()
 
 # JWT 校验中间件
@@ -68,7 +69,7 @@ def login():
     
     token = jwt.encode({
         "sub": str(row["id"]), "username": row["username"],
-        "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+        "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
     }, SECRET_KEY, algorithm="HS256")
     return jsonify({"token": token})
 
@@ -102,4 +103,4 @@ def create_post():
 
 if __name__ == "__main__":
     init_db()
-    app.run(debug=True, port=5000)
+    app.run(debug=os.environ.get("FLASK_DEBUG") == "1", port=5000)
