@@ -40,7 +40,7 @@ A GitHub Actions pipeline (`.github/workflows/ci.yml`) is configured. On every c
 `pip-audit` is the Python-native SCA scanner: it resolves `requirements.txt` and checks every pinned package against the PyPI/OSV advisory database, and it is invoked with `--strict` so that any known vulnerable dependency fails the build.
 
 ### GitHub Actions Screenshot
-<img width="1581" height="1518" alt="7github2" src="https://github.com/user-attachments/assets/65ba306e-3d11-4e72-8ebc-08b4c00dafc5" />
+<img width="1198" height="1103" alt="SAST (bandit) and SCA (pip-audit) step output" src="docs/actions-ci.png" />
 
 
 
