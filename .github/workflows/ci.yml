@@ -1,0 +1,17 @@
+name: Security CI
+on: [push, pull_request]
+
+jobs:
+  sast-sca:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Dependencies
+        run: pip install -r requirements.txt bandit pip-audit
+      - name: SAST (bandit)
+        run: bandit -r . -ll -iii -x venv
+      - name: SCA (pip-audit)
+        run: pip-audit -r requirements.txt --strict
