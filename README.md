@@ -5,7 +5,7 @@
 **Class:** 23320112
 
 **Repository:** https://github.com/Yewleaves/secure-api-lab
-**Last successful pipeline run:** https://github.com/Yewleaves/secure-api-lab/actions/runs/39376989825
+**Last successful pipeline run:** https://github.com/Yewleaves/secure-api-lab/actions/runs/39378531575
 
 ## 1. Project & API Description
 This project is a secure REST API built with Python and the Flask framework, using SQLite for data storage. It implements the following three endpoints:
