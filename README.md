@@ -26,8 +26,8 @@ This project is a secure REST API built with Python and the Flask framework, usi
   - A custom `@token_required` middleware intercepts and rejects any requests without a valid token.
 
 ### API Testing Screenshots
-<img width="835" height="399" alt="6flask响应日志" src="https://github.com/user-attachments/assets/340ca746-067f-4460-b15a-4f416ff8bdd0" />
-<img width="1071" height="1025" alt="5测试" src="https://github.com/user-attachments/assets/0155ec50-707c-4faa-b74e-9593f226b8fc" />
+<img width="1074" height="396" alt="Flask startup log" src="docs/flask-log.png" />
+<img width="1205" height="461" alt="API test results" src="docs/api-tests.png" />
 
 
 
