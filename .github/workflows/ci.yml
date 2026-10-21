@@ -13,5 +13,7 @@ jobs:
         run: pip install -r requirements.txt bandit pip-audit
       - name: SAST (bandit)
         run: bandit -r . -ll -iii -x venv
+             echo "===== Details of the filtered vulnerabilities ====="
+             bandit -r . -x venv || true
       - name: SCA (pip-audit)
         run: pip-audit -r requirements.txt --strict
